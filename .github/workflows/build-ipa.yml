@@ -1,0 +1,180 @@
+name: Build sing-box iOS IPA
+
+# 构建内容:
+#   sing-box (Go 核心, testing 分支)  ->  gomobile bind  ->  Libbox.xcframework
+#   sing-box-for-apple (SFI, iOS 客户端) -> xcodebuild Release -> SFI.app -> Payload/xxx.ipa
+# 产出为未签名 ipa (无 Apple 开发者证书), 需用 AltStore / Sideloadly / TrollStore 自签安装.
+
+on:
+  workflow_dispatch:
+    inputs:
+      go_version:
+        description: 'Go toolchain used to build Libbox'
+        required: false
+        default: '1.26.10'
+      libbox_platform:
+        description: 'gomobile bind platform for cmd/internal/build_libbox (ios => device + simulator slices)'
+        required: false
+        default: 'ios'
+      tag_version:
+        description: 'Synthetic git tag used as the sing-box version string'
+        required: false
+        default: 'v1.15.0-alpha.13'
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-ipa.yml'
+      - 'sing-box/**'
+      - 'sing-box-for-apple/**'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: SFI unsigned IPA
+    # .glassEffect / iOS 26 SDK 需要 Xcode 26, 因此用 macos-26 镜像
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      DISABLE_SWIFTLINT: '1'
+      GOTOOLCHAIN: local
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Toolchain report
+        run: |
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          xcodebuild -showsdks | tail -n 20
+
+      - name: Trust Xcode package plugins
+        run: |
+          defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES || true
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES || true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ github.event.inputs.go_version || '1.26.10' }}
+          cache: true
+          cache-dependency-path: sing-box/go.sum
+
+      - name: Patch Go runtime for iOS arm64 CPU features
+        working-directory: sing-box
+        continue-on-error: true
+        run: bash .github/patch_go_for_ios.sh
+
+      - name: Install gomobile / gobind (sagernet fork)
+        working-directory: sing-box
+        run: |
+          go install -v github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+          go install -v github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          ls -l "$(go env GOPATH)/bin"
+
+      - name: Set synthetic version tag
+        working-directory: sing-box
+        run: |
+          git tag -f "${{ github.event.inputs.tag_version || 'v1.15.0-alpha.13' }}"
+          git describe --tags
+
+      - name: Fetch Runestone (local Swift package dependency)
+        run: |
+          rm -rf sing-box-for-apple/Frameworks/Runestone
+          git clone --depth 1 https://github.com/nekohasekai/Runestone.git sing-box-for-apple/Frameworks/Runestone
+          git -C sing-box-for-apple/Frameworks/Runestone log --oneline -1
+
+      - name: Build Libbox.xcframework
+        working-directory: sing-box
+        run: |
+          PLATFORM="${{ github.event.inputs.libbox_platform || 'ios' }}"
+          echo "gomobile bind platform: $PLATFORM"
+          go run ./cmd/internal/build_libbox -target apple -platform "$PLATFORM"
+          echo "--- Libbox.xcframework ---"
+          find ../sing-box-for-apple/Libbox.xcframework -maxdepth 2 -mindepth 1 | sort
+          du -sh ../sing-box-for-apple/Libbox.xcframework
+
+      - name: Resolve Swift package dependencies
+        working-directory: sing-box-for-apple
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project sing-box.xcodeproj \
+            -scheme SFI \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation
+
+      - name: Build SFI.app (Release, unsigned)
+        working-directory: sing-box-for-apple
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project sing-box.xcodeproj \
+            -scheme SFI \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | tail -n 80
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/SFI.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "SFI.app not found, dumping products directory:"
+            find "$RUNNER_TEMP/DerivedData/Build/Products" -maxdepth 2 | sort
+            exit 1
+          fi
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" 2>/dev/null || echo 0)
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist" 2>/dev/null || echo 0)
+          NAME="sing-box-SFI-unsigned-${VERSION}-${BUILD}"
+          rm -rf "$RUNNER_TEMP/ipa"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/"
+          echo "embedded bundles:"
+          find "$RUNNER_TEMP/ipa/Payload/SFI.app/PlugIns" -maxdepth 1 -mindepth 1 2>/dev/null | sort || true
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "${NAME}.ipa" Payload
+          ls -lh "${NAME}.ipa"
+          echo "IPA_NAME=${NAME}" >> "$GITHUB_ENV"
+          echo "IPA_FILE=$RUNNER_TEMP/ipa/${NAME}.ipa" >> "$GITHUB_ENV"
+          echo "APP_VERSION=${VERSION} (${BUILD})" >> "$GITHUB_ENV"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IPA_NAME }}
+          path: ${{ env.IPA_FILE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7

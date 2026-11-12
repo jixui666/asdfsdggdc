@@ -1,0 +1,28 @@
+Source snapshot
+===============
+
+sing-box
+  repo   : https://github.com/SagerNet/sing-box
+  branch : testing
+  commit : a13dbe1f785f66c86acbf3985c33fdafea0cbfd6
+  date   : 2026-11-10T11:23:21Z
+  note   : vendored from the sing-box repo (this directory carries the full Go tree,
+           the iOS client lives in ../sing-box-for-apple)
+
+sing-box-for-apple (SFI / SFM / SFT)
+  repo   : https://github.com/SagerNet/sing-box-for-apple
+  branch : dev
+  commit : 768b3de2baf2461dd06405cba1b2ca4e39da5ea4
+  date   : 2026-11-03T03:17:31Z
+  version: 1.15.0-alpha.13
+  note   : upstream submodule Frameworks/Runestone is NOT vendored, the workflow clones it
+
+Frameworks/Runestone (submodule of sing-box-for-apple)
+  repo   : https://github.com/nekohasekai/Runestone
+  commit : baeb3cbf8332d26b4f7b4c175a01f288ebbf3e7f (main, pushed 2026-04-08)
+
+Build
+  target : iOS (SFI), unsigned .ipa
+  runner : macos-26 (Xcode 26 required: iOS 26 SDK / .glassEffect)
+  go     : 1.26.10 (gomobile + gobind from github.com/sagernet/gomobile v0.1.13)
+  ipa    : Payload/SFI.app -> sing-box-SFI-unsigned-<version>-<build>.ipa

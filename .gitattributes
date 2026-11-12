@@ -1,0 +1,44 @@
+# 统一按文本处理, 仓库内一律 LF (GitHub Actions 的 runner 是 macOS/Linux, 脚本不能带 CRLF)
+* text=auto
+
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.go        text eol=lf
+*.mod       text eol=lf
+*.sum       text eol=lf
+*.swift     text eol=lf
+*.pbxproj   text eol=lf
+*.plist     text eol=lf
+*.strings   text eol=lf
+*.xcstrings text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+Makefile    text eol=lf
+*.mk        text eol=lf
+*.patch     text eol=lf
+
+# 二进制: 不做任何转换
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.icns      binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.tar       binary
+*.a         binary
+*.dylib     binary
+*.so        binary
+*.sys       binary
+*.p12       binary
+*.cer       binary
+*.der       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+*.car       binary
