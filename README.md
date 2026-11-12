@@ -57,7 +57,7 @@ xcodebuild build -project sing-box.xcodeproj -scheme SFI -configuration Release 
   -derivedDataPath build/dd -skipPackagePluginValidation \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
-mkdir -p build/Payload && cp -R build/dd/Build/Products/Release-iphoneos/SFI.app build/Payload/
+mkdir -p build/Payload && cp -R build/dd/Build/Products/Release-iphoneos/sing-box.app build/Payload/
 cd build && zip -qry SFI-unsigned.ipa Payload
 ```
 

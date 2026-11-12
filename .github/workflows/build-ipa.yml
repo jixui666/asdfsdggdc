@@ -84,6 +84,16 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           ls -l "$(go env GOPATH)/bin"
 
+      - name: Cache Go build (libbox)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/Library/Caches/go-build
+          key: libbox-${{ runner.os }}-${{ hashFiles('sing-box/go.sum') }}
+          restore-keys: |
+            libbox-${{ runner.os }}-
+
       - name: Set synthetic version tag
         working-directory: sing-box
         run: |
@@ -140,12 +150,19 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/SFI.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "SFI.app not found, dumping products directory:"
+          set -euo pipefail
+          PRODUCTS="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos"
+          echo "--- Build/Products ---"
+          ls -la "$PRODUCTS" || true
+          # the SFI target sets PRODUCT_NAME = "sing-box", so the bundle is sing-box.app
+          APP_PATH=$(find "$PRODUCTS" -maxdepth 1 -type d -name '*.app' | head -n 1)
+          if [ -z "${APP_PATH:-}" ] || [ ! -d "$APP_PATH" ]; then
+            echo "no .app produced, dumping products directory:"
             find "$RUNNER_TEMP/DerivedData/Build/Products" -maxdepth 2 | sort
             exit 1
           fi
+          APP_NAME=$(basename "$APP_PATH")
+          echo "app bundle: $APP_PATH"
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" 2>/dev/null || echo 0)
           BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist" 2>/dev/null || echo 0)
           NAME="sing-box-SFI-unsigned-${VERSION}-${BUILD}"
@@ -153,12 +170,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/"
           echo "embedded bundles:"
-          find "$RUNNER_TEMP/ipa/Payload/SFI.app/PlugIns" -maxdepth 1 -mindepth 1 2>/dev/null | sort || true
+          find "$RUNNER_TEMP/ipa/Payload/$APP_NAME/PlugIns" -maxdepth 1 -mindepth 1 2>/dev/null | sort || true
           cd "$RUNNER_TEMP/ipa"
           zip -qry "${NAME}.ipa" Payload
           ls -lh "${NAME}.ipa"
           echo "IPA_NAME=${NAME}" >> "$GITHUB_ENV"
           echo "IPA_FILE=$RUNNER_TEMP/ipa/${NAME}.ipa" >> "$GITHUB_ENV"
+          echo "APP_BUNDLE=${APP_NAME}" >> "$GITHUB_ENV"
           echo "APP_VERSION=${VERSION} (${BUILD})" >> "$GITHUB_ENV"
 
       - name: Upload IPA
